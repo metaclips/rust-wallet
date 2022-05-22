@@ -26,8 +26,8 @@ use bitcoin::util::bip158::{BitStreamReader, BitStreamWriter};
 use crypto::{hmac::Hmac, mac::Mac, pbkdf2::pbkdf2, sha2::Sha256};
 use rand::{thread_rng, RngCore};
 
-use account::Seed;
-use error::Error;
+use crate::account::Seed;
+use crate::error::Error;
 
 const RADIX_BITS: usize = 10; // The length of the radix in bits.
 
@@ -684,7 +684,9 @@ mod test {
     use rand::{thread_rng, Rng};
     use serde_json::Value;
 
-    use account::{Account, AccountAddressType, MasterAccount, MasterKeyEntropy, Seed, Unlocker};
+    use crate::account::{
+        Account, AccountAddressType, MasterAccount, MasterKeyEntropy, Seed, Unlocker,
+    };
 
     use super::{ShamirSecretSharing, Share, WORDS};
 
@@ -823,8 +825,12 @@ mod test {
                     .iter()
                     .map(|v| Share::from_mnemonic(v.as_str().unwrap()).unwrap())
                     .collect::<Vec<_>>();
-                assert_eq!(result,
-                    ShamirSecretSharing::combine(&shares, Some("TREZOR")).unwrap().0.to_hex(),
+                assert_eq!(
+                    result,
+                    ShamirSecretSharing::combine(&shares, Some("TREZOR"))
+                        .unwrap()
+                        .0
+                        .to_hex(),
                 );
             }
         }

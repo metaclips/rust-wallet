@@ -21,17 +21,6 @@
 #![deny(unused_must_use)]
 #![forbid(unsafe_code)]
 
-pub extern crate bitcoin;
-pub extern crate crypto;
-extern crate rand;
-
-#[cfg(feature = "serde")]
-#[macro_use]
-extern crate serde;
-
-#[cfg(test)]
-extern crate serde_json;
-
 pub mod account;
 pub mod coins;
 pub mod context;

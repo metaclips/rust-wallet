@@ -18,7 +18,8 @@
 //!
 //! TREZOR compatible mnemonic in english
 //!
-use account::{MasterKeyEntropy, Seed};
+use crate::account::{MasterKeyEntropy, Seed};
+use crate::error::Error;
 use bitcoin::util::bip158::{BitStreamReader, BitStreamWriter};
 use crypto::{
     digest::Digest,
@@ -26,7 +27,6 @@ use crypto::{
     pbkdf2::pbkdf2,
     sha2::{Sha256, Sha512},
 };
-use error::Error;
 use rand::{thread_rng, RngCore};
 use std::io::Cursor;
 
@@ -171,7 +171,7 @@ mod test {
     use bitcoin::network::constants::Network;
     use serde_json::Value;
 
-    use context::SecpContext;
+    use crate::context::SecpContext;
 
     use super::*;
 
@@ -199,7 +199,10 @@ mod test {
                 mnemonic.to_string(),
                 Mnemonic::new(data.as_slice()).unwrap().to_string()
             );
-            assert_eq!(seed.0, Vec::<u8>::from_hex(values[2].as_str().unwrap()).unwrap());
+            assert_eq!(
+                seed.0,
+                Vec::<u8>::from_hex(values[2].as_str().unwrap()).unwrap()
+            );
 
             if values.len() == 4 {
                 let pk = values[3].as_str().unwrap();

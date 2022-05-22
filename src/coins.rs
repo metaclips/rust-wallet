@@ -23,8 +23,8 @@ use std::collections::HashMap;
 use bitcoin::{Block, OutPoint, Script, Transaction, TxOut};
 use rand::thread_rng;
 
-use account::{KeyDerivation, MasterAccount};
-use proved::ProvedTransaction;
+use crate::account::{KeyDerivation, MasterAccount};
+use crate::proved::ProvedTransaction;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 /// a coin is defined by the spendable output
@@ -320,17 +320,17 @@ mod test {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-use bitcoin::hashes::hex::FromHex;
-    use bitcoin::blockdata::constants::genesis_block;
     use bitcoin::blockdata::script::Builder;
+    use bitcoin::hashes::hex::FromHex;
     use bitcoin::util::bip32::ExtendedPubKey;
+    use bitcoin::{blockdata::constants::genesis_block, Witness};
     use bitcoin::{
-        network::constants::Network, Address, Block, BlockHeader, OutPoint,
-        Transaction, TxIn, TxOut,
+        network::constants::Network, Address, Block, BlockHeader, OutPoint, Transaction, TxIn,
+        TxOut,
     };
 
-    use account::{Account, AccountAddressType, MasterAccount, Unlocker};
-    use coins::Coins;
+    use crate::account::{Account, AccountAddressType, MasterAccount, Unlocker};
+    use crate::coins::Coins;
 
     const NEW_COINS: u64 = 5000000000;
 
@@ -357,7 +357,7 @@ use bitcoin::hashes::hex::FromHex;
             lock_time: 0,
             input: vec![TxIn {
                 sequence: 0xffffffff,
-                witness: Vec::new(),
+                witness: Witness::new(),
                 previous_output: OutPoint {
                     txid: bitcoin::Txid::default(),
                     vout: 0,
@@ -373,7 +373,7 @@ use bitcoin::hashes::hex::FromHex;
 
     fn add_tx(block: &mut Block, tx: Transaction) {
         block.txdata.push(tx);
-        block.header.merkle_root = block.merkle_root();
+        block.header.merkle_root = block.compute_merkle_root().unwrap();
     }
 
     fn new_master() -> MasterAccount {

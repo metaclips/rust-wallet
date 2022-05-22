@@ -19,7 +19,7 @@
 //! Modules of this library use this error class to indicate problems.
 //!
 
-use std::{convert, error, fmt, io};
+use std::{convert, fmt, io};
 
 use bitcoin::util::bip32;
 use crypto::symmetriccipher;
@@ -42,25 +42,7 @@ pub enum Error {
     SecpError(bitcoin::secp256k1::Error),
     /// cipher error
     SymmetricCipherError(symmetriccipher::SymmetricCipherError),
-}
-
-impl error::Error for Error {
-    fn description(&self) -> &str {
-        "description() is deprecated; use Display"
-    }
-
-    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-        match *self {
-            Error::Network => None,
-            Error::Passphrase => None,
-            Error::Unsupported(_) => None,
-            Error::Mnemonic(_) => None,
-            Error::IO(ref err) => Some(err),
-            Error::KeyDerivation(ref err) => Some(err),
-            Error::SecpError(ref err) => Some(err),
-            Error::SymmetricCipherError(_) => None,
-        }
-    }
+    SigHashError(bitcoin::util::sighash::Error),
 }
 
 impl fmt::Display for Error {
@@ -83,6 +65,7 @@ impl fmt::Display for Error {
                     &symmetriccipher::SymmetricCipherError::InvalidPadding => "invalid padding",
                 }
             ),
+            Error::SigHashError(ref err) => write!(f, "Sighash error: {err}"),
         }
     }
 }
@@ -97,9 +80,7 @@ impl convert::From<Error> for io::Error {
     fn from(err: Error) -> io::Error {
         match err {
             Error::IO(e) => e,
-            _ => {
-                io::Error::new(io::ErrorKind::Other, err.to_string())
-            }
+            _ => io::Error::new(io::ErrorKind::Other, err.to_string()),
         }
     }
 }
@@ -125,5 +106,11 @@ impl convert::From<symmetriccipher::SymmetricCipherError> for Error {
 impl convert::From<bitcoin::secp256k1::Error> for Error {
     fn from(err: bitcoin::secp256k1::Error) -> Error {
         Error::SecpError(err)
+    }
+}
+
+impl From<bitcoin::util::sighash::Error> for Error {
+    fn from(err: bitcoin::util::sighash::Error) -> Error {
+        Error::SigHashError(err)
     }
 }

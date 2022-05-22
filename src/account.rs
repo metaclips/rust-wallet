@@ -24,11 +24,11 @@ use bitcoin::{
     blockdata::script::Builder,
     blockdata::{
         opcodes::all,
-        transaction::{SigHashType, TxOut},
+        transaction::{EcdsaSighashType, TxOut},
     },
     network::constants::Network,
-    util::bip143,
     util::bip32::{ChildNumber, ExtendedPrivKey},
+    util::sighash::SighashCache,
     Address, OutPoint, PrivateKey, PublicKey, Script, Transaction,
 };
 use crypto::{
@@ -44,9 +44,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use context::SecpContext;
-use error::Error;
-use sss::{ShamirSecretSharing, Share};
+use crate::context::SecpContext;
+use crate::error::Error;
+use crate::sss::{ShamirSecretSharing, Share};
 
 use crate::mnemonic::Mnemonic;
 
@@ -141,7 +141,7 @@ impl MasterAccount {
     ) -> Result<MasterAccount, Error> {
         let context = SecpContext::new();
         let encrypted = seed.encrypt(passphrase)?;
-        let master_key = context.master_private_key(network, &seed)?;
+        let master_key = context.master_private_key(network, seed)?;
         let public_master_key = context.extended_public_from_private(&master_key);
         Ok(MasterAccount {
             master_public: public_master_key,
@@ -212,7 +212,7 @@ impl MasterAccount {
     pub fn sign<R>(
         &self,
         transaction: &mut Transaction,
-        hash_type: SigHashType,
+        hash_type: EcdsaSighashType,
         resolver: &R,
         unlocker: &mut Unlocker,
     ) -> Result<usize, Error>
@@ -336,7 +336,7 @@ impl Unlocker {
         let mut key = self
             .context
             .private_child(&sub_account_key, ChildNumber::Normal { index })?
-            .private_key;
+            .to_priv();
         if let Some(tweak) = tweak {
             self.context.tweak_add(&mut key, tweak.as_slice())?;
         }
@@ -523,14 +523,14 @@ impl Account {
             AccountAddressType::P2SHWPKH => Builder::new()
                 .push_opcode(all::OP_DUP)
                 .push_opcode(all::OP_HASH160)
-                .push_slice(&hash160::Hash::hash(public.to_bytes().as_slice())[..])
+                .push_slice(&hash160::Hash::hash(public.to_bytes().as_ref()))
                 .push_opcode(all::OP_EQUALVERIFY)
                 .push_opcode(all::OP_CHECKSIG)
                 .into_script(),
             AccountAddressType::P2WPKH => Builder::new()
                 .push_opcode(all::OP_DUP)
                 .push_opcode(all::OP_HASH160)
-                .push_slice(&hash160::Hash::hash(public.to_bytes().as_slice())[..])
+                .push_slice(&hash160::Hash::hash(public.to_bytes().as_ref()))
                 .push_opcode(all::OP_EQUALVERIFY)
                 .push_opcode(all::OP_CHECKSIG)
                 .into_script(),
@@ -568,7 +568,10 @@ impl Account {
         Ok(&key)
     }
 
-    pub fn compute_base_public_key(&self, kix: u32) -> Result<PublicKey, Error> {
+    pub fn compute_base_public_key(
+        &self,
+        kix: u32,
+    ) -> Result<bitcoin::secp256k1::PublicKey, Error> {
         Ok(self
             .context
             .public_child(&self.master_public, ChildNumber::Normal { index: kix })?
@@ -634,7 +637,7 @@ impl Account {
     pub fn sign<R>(
         &self,
         transaction: &mut Transaction,
-        hash_type: SigHashType,
+        hash_type: EcdsaSighashType,
         resolver: R,
         unlocker: &mut Unlocker,
     ) -> Result<usize, Error>
@@ -644,7 +647,7 @@ impl Account {
         let mut signed = 0;
         //TODO(stevenroose) try to prevent this clone here
         let txclone = transaction.clone();
-        let mut bip143hasher = bip143::SigHashCache::new(&txclone);
+        let mut bip143hasher = SighashCache::new(&txclone);
         for (ix, input) in transaction.input.iter_mut().enumerate() {
             if let Some(spend) = resolver(&input.previous_output) {
                 if let Some((kix, instantiated)) = self
@@ -665,11 +668,11 @@ impl Account {
                             let sighash = txclone.signature_hash(
                                 ix,
                                 &instantiated.address.script_pubkey(),
-                                hash_type.as_u32(),
+                                hash_type.to_u32(),
                             );
                             let signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
                             let mut with_hashtype = signature.to_vec();
-                            with_hashtype.push(hash_type.as_u32() as u8);
+                            with_hashtype.push(hash_type.to_u32() as u8);
                             input.script_sig = Builder::new()
                                 .push_slice(with_hashtype.as_slice())
                                 .push_slice(instantiated.public.to_bytes().as_slice())
@@ -678,26 +681,27 @@ impl Account {
                             signed += 1;
                         }
                         AccountAddressType::P2WPKH => {
-                            if hash_type.as_u32() & SigHashType::All.as_u32() == 0 {
+                            if hash_type.to_u32() & EcdsaSighashType::All.to_u32() == 0 {
                                 return Err(Error::Unsupported("can only sign all inputs for now"));
                             }
+
                             input.script_sig = Script::new();
-                            let sighash = bip143hasher.signature_hash(
+                            let sighash = bip143hasher.segwit_signature_hash(
                                 ix,
                                 &instantiated.script_code,
                                 spend.value,
                                 hash_type,
-                            );
+                            )?;
                             let signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
                             let mut with_hashtype = signature.to_vec();
-                            with_hashtype.push(hash_type.as_u32() as u8);
+                            with_hashtype.push(hash_type.to_u32() as u8);
                             input.witness.clear();
                             input.witness.push(with_hashtype);
                             input.witness.push(instantiated.public.to_bytes());
                             signed += 1;
                         }
                         AccountAddressType::P2SHWPKH => {
-                            if hash_type.as_u32() & SigHashType::All.as_u32() == 0 {
+                            if hash_type.to_u32() & EcdsaSighashType::All.to_u32() == 0 {
                                 return Err(Error::Unsupported("can only sign all inputs for now"));
                             }
                             input.script_sig = Builder::new()
@@ -712,34 +716,34 @@ impl Account {
                                         .into_script()[..],
                                 )
                                 .into_script();
-                            let sighash = bip143hasher.signature_hash(
+                            let sighash = bip143hasher.segwit_signature_hash(
                                 ix,
                                 &instantiated.script_code,
                                 spend.value,
                                 hash_type,
-                            );
+                            )?;
                             let signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
                             let mut with_hashtype = signature.to_vec();
-                            with_hashtype.push(hash_type.as_u32() as u8);
+                            with_hashtype.push(hash_type.to_u32() as u8);
                             input.witness.clear();
                             input.witness.push(with_hashtype);
                             input.witness.push(instantiated.public.to_bytes());
                             signed += 1;
                         }
                         AccountAddressType::P2WSH(_) => {
-                            if hash_type.as_u32() & SigHashType::All.as_u32() == 0 {
+                            if hash_type.to_u32() & EcdsaSighashType::All.to_u32() == 0 {
                                 return Err(Error::Unsupported("can only sign all inputs for now"));
                             }
                             input.script_sig = Script::new();
-                            let sighash = bip143hasher.signature_hash(
+                            let sighash = bip143hasher.segwit_signature_hash(
                                 ix,
                                 &instantiated.script_code,
                                 spend.value,
                                 hash_type,
-                            );
+                            )?;
                             let signature = self.context.sign(&sighash[..], &pk)?.serialize_der();
                             let mut with_hashtype = signature.to_vec();
-                            with_hashtype.push(hash_type.as_u32() as u8);
+                            with_hashtype.push(hash_type.to_u32() as u8);
                             input.witness.clear();
                             input.witness.push(with_hashtype);
                             input.witness.push(instantiated.script_code.to_bytes());
@@ -778,9 +782,12 @@ impl InstantiatedKey {
     where
         W: FnOnce(&PublicKey, Option<u16>) -> Script,
     {
-        let mut public = context
+        let public = context
             .public_child(master, ChildNumber::Normal { index: kix })?
             .public_key;
+
+        let mut public = PublicKey::new(public);
+
         if let Some(tweak) = tweak {
             context.tweak_exp_add(&mut public, tweak)?;
         }
@@ -882,12 +889,13 @@ mod test {
     use std::io::Read;
     use std::path::PathBuf;
 
-    use bitcoin::hashes::hex::FromHex;
     use bitcoin::blockdata::opcodes::all;
     use bitcoin::blockdata::script::Builder;
     use bitcoin::blockdata::transaction::{OutPoint, TxIn, TxOut};
+    use bitcoin::hashes::hex::FromHex;
     use bitcoin::network::constants::Network;
     use bitcoin::util::bip32::ChildNumber;
+    use bitcoin::Witness;
     use rand::Rng;
     use serde_json::Value;
 
@@ -925,7 +933,7 @@ mod test {
                     vout: 0,
                 },
                 sequence: RBF,
-                witness: Vec::new(),
+                witness: Witness::new(),
                 script_sig: Script::new(),
             }],
             output: vec![TxOut {
@@ -941,7 +949,7 @@ mod test {
             input: vec![TxIn {
                 previous_output: OutPoint { txid, vout: 0 },
                 sequence: RBF,
-                witness: Vec::new(),
+                witness: Witness::new(),
                 script_sig: Script::new(),
             }],
             output: vec![TxOut {
@@ -959,7 +967,7 @@ mod test {
             master
                 .sign(
                     &mut spending_transaction,
-                    SigHashType::All,
+                    EcdsaSighashType::All,
                     &(|_| Some(input_transaction.output[0].clone())),
                     &mut unlocker
                 )
@@ -995,7 +1003,7 @@ mod test {
                     vout: 0,
                 },
                 sequence: RBF,
-                witness: Vec::new(),
+                witness: Witness::new(),
                 script_sig: Script::new(),
             }],
             output: vec![TxOut {
@@ -1011,7 +1019,7 @@ mod test {
             input: vec![TxIn {
                 previous_output: OutPoint { txid, vout: 0 },
                 sequence: RBF,
-                witness: Vec::new(),
+                witness: Witness::new(),
                 script_sig: Script::new(),
             }],
             output: vec![TxOut {
@@ -1029,7 +1037,7 @@ mod test {
             master
                 .sign(
                     &mut spending_transaction,
-                    SigHashType::All,
+                    EcdsaSighashType::All,
                     &(|_| Some(input_transaction.output[0].clone())),
                     &mut unlocker
                 )
@@ -1065,7 +1073,7 @@ mod test {
                     vout: 0,
                 },
                 sequence: RBF,
-                witness: Vec::new(),
+                witness: Witness::new(),
                 script_sig: Script::new(),
             }],
             output: vec![TxOut {
@@ -1082,7 +1090,7 @@ mod test {
             input: vec![TxIn {
                 previous_output: OutPoint { txid, vout: 0 },
                 sequence: RBF,
-                witness: Vec::new(),
+                witness: Witness::new(),
                 script_sig: Script::new(),
             }],
             output: vec![TxOut {
@@ -1100,7 +1108,7 @@ mod test {
             master
                 .sign(
                     &mut spending_transaction,
-                    SigHashType::All,
+                    EcdsaSighashType::All,
                     &(|_| Some(input_transaction.output[0].clone())),
                     &mut unlocker
                 )
@@ -1149,7 +1157,7 @@ mod test {
                     vout: 0,
                 },
                 sequence: RBF,
-                witness: Vec::new(),
+                witness: Witness::new(),
                 script_sig: Script::new(),
             }],
             output: vec![TxOut {
@@ -1165,7 +1173,7 @@ mod test {
             input: vec![TxIn {
                 previous_output: OutPoint { txid, vout: 0 },
                 sequence: RBF,
-                witness: Vec::new(),
+                witness: Witness::new(),
                 script_sig: Script::new(),
             }],
             output: vec![TxOut {
@@ -1183,7 +1191,7 @@ mod test {
             master
                 .sign(
                     &mut spending_transaction,
-                    SigHashType::All,
+                    EcdsaSighashType::All,
                     &(|_| Some(input_transaction.output[0].clone())),
                     &mut unlocker
                 )
@@ -1237,7 +1245,7 @@ mod test {
                     vout: 0,
                 },
                 sequence: RBF,
-                witness: Vec::new(),
+                witness: Witness::new(),
                 script_sig: Script::new(),
             }],
             output: vec![TxOut {
@@ -1253,7 +1261,7 @@ mod test {
             input: vec![TxIn {
                 previous_output: OutPoint { txid, vout: 0 },
                 sequence: CSV as u32,
-                witness: Vec::new(),
+                witness: Witness::new(),
                 script_sig: Script::new(),
             }],
             output: vec![TxOut {
@@ -1271,7 +1279,7 @@ mod test {
             master
                 .sign(
                     &mut spending_transaction,
-                    SigHashType::All,
+                    EcdsaSighashType::All,
                     &(|_| Some(input_transaction.output[0].clone())),
                     &mut unlocker
                 )
@@ -1291,7 +1299,7 @@ mod test {
             input: vec![TxIn {
                 previous_output: OutPoint { txid, vout: 0 },
                 sequence: (CSV - 1) as u32, // this one should not be able to spend
-                witness: Vec::new(),
+                witness: Witness::new(),
                 script_sig: Script::new(),
             }],
             output: vec![TxOut {
@@ -1306,7 +1314,7 @@ mod test {
             master
                 .sign(
                     &mut spending_transaction,
-                    SigHashType::All,
+                    EcdsaSighashType::All,
                     &(|_| Some(input_transaction.output[0].clone())),
                     &mut unlocker
                 )

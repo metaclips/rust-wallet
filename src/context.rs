@@ -16,15 +16,15 @@
 //!
 //! # Key derivation
 //!
-use bitcoin::secp256k1::{All, Message, Secp256k1, Signature};
+use bitcoin::secp256k1::{ecdsa::Signature, All, Message, Secp256k1};
 use bitcoin::{
     network::constants::Network,
     util::bip32::{ChildNumber, ExtendedPrivKey, ExtendedPubKey},
     PrivateKey, PublicKey,
 };
 
-use account::Seed;
-use error::Error;
+use crate::account::Seed;
+use crate::error::Error;
 
 pub struct SecpContext {
     secp: Secp256k1<All>,
@@ -51,7 +51,7 @@ impl SecpContext {
         &self,
         extended_private_key: &ExtendedPrivKey,
     ) -> ExtendedPubKey {
-        ExtendedPubKey::from_private(&self.secp, extended_private_key)
+        ExtendedPubKey::from_priv(&self.secp, extended_private_key)
     }
 
     pub fn private_child(
@@ -75,16 +75,18 @@ impl SecpContext {
     }
 
     pub fn sign(&self, digest: &[u8], key: &PrivateKey) -> Result<Signature, Error> {
-        Ok(self.secp.sign(&Message::from_slice(digest)?, &key.key))
+        Ok(self
+            .secp
+            .sign_ecdsa(&Message::from_slice(digest)?, &key.inner))
     }
 
     pub fn tweak_add(&self, key: &mut PrivateKey, tweak: &[u8]) -> Result<(), Error> {
-        key.key.add_assign(tweak)?;
+        key.inner.add_assign(tweak)?;
         Ok(())
     }
 
     pub fn tweak_exp_add(&self, key: &mut PublicKey, tweak: &[u8]) -> Result<(), Error> {
-        key.key.add_exp_assign(&self.secp, tweak)?;
+        key.inner.add_exp_assign(&self.secp, tweak)?;
         Ok(())
     }
 }
