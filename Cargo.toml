@@ -12,14 +12,14 @@ readme = "README.md"
 edition = "2021"
 
 [features]
-use-serde = ["serde", "bitcoin/use-serde"]
+serde = ["actual-serde", "bitcoin/serde"]
 
 [dependencies]
 bitcoin = "0.28.0"
 rand = "0.8.5"
 rust-crypto = "0.2"
 
-serde = { version = "1.0", optional = true, features = ["derive"] }
+actual-serde = { package = "serde", version = "1.0.103", default-features = false, features = [ "derive" ], optional = true }
 
 [dev-dependencies]
 bitcoin = { version = "0.28.0", features = ["use-serde", "bitcoinconsensus"] }
